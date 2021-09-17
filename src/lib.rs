@@ -1,3 +1,7 @@
+mod price_receiver;
+
+use crate::price_receiver::*;
+
 use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
 use near_contract_standards::fungible_token::metadata::{
     FungibleTokenMetadata, FungibleTokenMetadataProvider,
@@ -10,7 +14,7 @@ use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
     assert_one_yocto, env, ext_contract, is_promise_success, log, near_bindgen, AccountId, Balance,
-    BorshStorageKey, Gas, PanicOnDefault, Promise, PromiseOrValue,
+    BorshStorageKey, Gas, PanicOnDefault, Promise, PromiseOrValue, Timestamp,
 };
 
 near_sdk::setup_alloc!();
@@ -34,6 +38,10 @@ enum StorageKey {
 #[serde(crate = "near_sdk::serde")]
 pub enum Status {
     Locked,
+    Unlocking {
+        #[serde(with = "u64_dec_format")]
+        initiated_timestamp: Timestamp,
+    },
     Unlocked,
 }
 
@@ -47,11 +55,17 @@ pub trait ExtSelf {
 }
 
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct Contract {
+    #[serde(skip)]
     pub ft: FungibleToken,
+    #[serde(skip)]
     pub meta: LazyOption<FungibleTokenMetadata>,
-    pub trigger_account_id: AccountId,
+    pub backup_trigger_account_id: Option<AccountId>,
+    pub price_oracle_account_id: AccountId,
+    pub asset_id: AssetId,
+    pub minimum_unlock_price: Price,
     pub locked_token_account_id: TokenAccountId,
     pub status: Status,
 }
@@ -104,36 +118,37 @@ impl ExtSelf for Contract {
 impl Contract {
     #[init]
     pub fn new(
-        trigger_account_id: ValidAccountId,
         locked_token_account_id: ValidAccountId,
         meta: FungibleTokenMetadata,
+        backup_trigger_account_id: Option<ValidAccountId>,
+        price_oracle_account_id: ValidAccountId,
+        asset_id: AssetId,
+        minimum_unlock_price: Price,
     ) -> Self {
         Self {
             ft: FungibleToken::new(StorageKey::Ft),
             meta: LazyOption::new(StorageKey::FtMeta, Some(&meta)),
-            trigger_account_id: trigger_account_id.into(),
+            backup_trigger_account_id: backup_trigger_account_id.map(|a| a.into()),
             locked_token_account_id: locked_token_account_id.into(),
             status: Status::Unlocked,
+            price_oracle_account_id: price_oracle_account_id.into(),
+            asset_id,
+            minimum_unlock_price,
         }
     }
 
-    pub fn get_status(&self) -> Status {
-        self.status
-    }
-
-    pub fn get_trigger_account_id(&self) -> AccountId {
-        self.trigger_account_id.clone()
-    }
-
-    pub fn get_locked_token_account_id(&self) -> AccountId {
-        self.locked_token_account_id.clone()
+    pub fn get_info(self) -> Self {
+        self
     }
 
     #[payable]
     pub fn unlock(&mut self) {
         assert_one_yocto();
-        assert_eq!(&env::predecessor_account_id(), &self.trigger_account_id);
-        assert!(matches!(self.status, Status::Locked));
+        assert_eq!(
+            &Some(env::predecessor_account_id()),
+            &self.backup_trigger_account_id
+        );
+        assert!(!matches!(self.status, Status::Unlocked));
         self.status = Status::Unlocked;
     }
 
