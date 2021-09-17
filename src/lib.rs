@@ -130,7 +130,7 @@ impl Contract {
             meta: LazyOption::new(StorageKey::FtMeta, Some(&meta)),
             backup_trigger_account_id: backup_trigger_account_id.map(|a| a.into()),
             locked_token_account_id: locked_token_account_id.into(),
-            status: Status::Unlocked,
+            status: Status::Locked,
             price_oracle_account_id: price_oracle_account_id.into(),
             asset_id,
             minimum_unlock_price,
