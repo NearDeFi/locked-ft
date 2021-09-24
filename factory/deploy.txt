@@ -1,0 +1,12 @@
+export CONTRACT_ID=dev-1632441018789-66705294329463
+
+near call $CONTRACT_ID new '{}' --accountId $CONTRACT_ID && near call $CONTRACT_ID storage_deposit '{}' --accountId $CONTRACT_ID --deposit 10
+
+near call $CONTRACT_ID whitelist_token '{"token_id": "wrap.testnet", "title": "NEAR", "decimals": 24}' --accountId $CONTRACT_ID
+
+near call $CONTRACT_ID create_token '{"token_args": {"token_id": "wrap.testnet", "target_price": "60000", "metadata": {"spec": "ft-1.0.0", "name": "1", "symbol": "2", "decimals": 28}, "backup_trigger_account_id": "dev-1631912016116-42587207920552", "price_oracle_account_id": "dev-1631302633591-50236902542063" }}' --accountId $CONTRACT_ID --gas 200000000000000
+
+near view $CONTRACT_ID get_token '{"token_id": "near_6"}'
+near view near_6.$CONTRACT_ID get_info '{}'
+
+near call dev-1631302633591-50236902542063 oracle_call '{"receiver_id": "near_6.'$CONTRACT_ID'","asset_ids": ["wrap.testnet"], "msg": ""}' --accountId $CONTRACT_ID --depositYocto 1
