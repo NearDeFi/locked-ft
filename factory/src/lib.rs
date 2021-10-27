@@ -6,7 +6,7 @@ use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json;
 use near_sdk::{
-    env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise, log
+    env, log, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise,
 };
 
 near_sdk::setup_alloc!();
@@ -31,7 +31,7 @@ pub fn is_valid_symbol(token_id: &TokenId) -> bool {
 enum StorageKey {
     Tokens,
     StorageDeposits,
-    WhitelistedTokens
+    WhitelistedTokens,
 }
 
 #[near_bindgen]
@@ -40,15 +40,15 @@ pub struct TokenFactory {
     pub tokens: UnorderedMap<TokenId, TokenArgs>,
     pub storage_deposits: LookupMap<AccountId, Balance>,
     pub storage_balance_cost: Balance,
-    pub whitelisted_tokens: UnorderedMap<AccountId, WhitelistedToken>
+    pub whitelisted_tokens: UnorderedMap<AccountId, WhitelistedToken>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct WhitelistedToken {
     pub title: String,
-    pub decimals: u8
+    pub asset_id: String,
+    pub decimals: u8,
 }
-
 
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
@@ -57,7 +57,7 @@ pub struct InputTokenArgs {
     target_price: U128,
     metadata: FungibleTokenMetadata,
     backup_trigger_account_id: Option<AccountId>,
-    price_oracle_account_id: AccountId
+    price_oracle_account_id: AccountId,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Copy)]
@@ -71,7 +71,6 @@ pub struct Price {
 pub type AssetId = String;
 pub type TokenAccountId = AccountId;
 
-
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct TokenArgs {
@@ -80,7 +79,7 @@ pub struct TokenArgs {
     pub backup_trigger_account_id: Option<AccountId>,
     pub price_oracle_account_id: AccountId,
     pub asset_id: AssetId,
-    pub minimum_unlock_price: Price
+    pub minimum_unlock_price: Price,
 }
 
 #[near_bindgen]
@@ -105,10 +104,22 @@ impl TokenFactory {
     }
 
     #[private]
-    pub fn whitelist_token(&mut self, token_id: ValidAccountId, title: String, decimals: u8) {
+    pub fn whitelist_token(
+        &mut self,
+        token_id: ValidAccountId,
+        asset_id: ValidAccountId,
+        title: String,
+        decimals: u8,
+    ) {
         assert!(is_valid_symbol(&title), "Invalid Token symbol");
-        self.whitelisted_tokens.insert(&(token_id.into()),
-                                       &WhitelistedToken{title, decimals});
+        self.whitelisted_tokens.insert(
+            &(token_id.into()),
+            &WhitelistedToken {
+                title,
+                asset_id: asset_id.into(),
+                decimals,
+            },
+        );
     }
 
     fn get_min_attached_balance(&self, args: &TokenArgs) -> u128 {
@@ -159,22 +170,28 @@ impl TokenFactory {
             self.storage_deposit();
         }
 
-        let whitelisted_token = self.whitelisted_tokens.get(&(token_args.token_id.clone().into())).expect("Token wasn't whitelisted");
+        let whitelisted_token = self
+            .whitelisted_tokens
+            .get(&(token_args.token_id.clone().into()))
+            .expect("Token wasn't whitelisted");
         let token_name = TokenFactory::format_title(whitelisted_token.title);
         let token_decimals = whitelisted_token.decimals;
 
-        assert_eq!(token_args.metadata.decimals, token_decimals, "Wrong decimals");
+        assert_eq!(
+            token_args.metadata.decimals, token_decimals,
+            "Wrong decimals"
+        );
 
         let minimum_unlock_price = Price {
             multiplier: token_args.target_price.0,
-            decimals: token_decimals + 4
+            decimals: token_decimals + 4,
         };
 
         let target_price_short: u128 = token_args.target_price.0 / 10000;
         let target_price_remainder: u128 = token_args.target_price.0 % 10000;
 
         let price = if target_price_remainder > 0 {
-           format!("{}.{}", target_price_short, target_price_remainder)
+            format!("{}.{}", target_price_short, target_price_remainder)
         } else {
             format!("{}", target_price_short)
         };
@@ -185,12 +202,11 @@ impl TokenFactory {
 
         token_args.metadata.assert_valid();
 
-
-        let token_id = format!("{}-{}-{:04}",
-                               token_name,
-                               target_price_short,
-                               target_price_remainder
-        ).to_ascii_lowercase();
+        let token_id = format!(
+            "{}-{}-{:04}",
+            token_name, target_price_short, target_price_remainder
+        )
+        .to_ascii_lowercase();
 
         let token_account_id = format!("{}.{}", token_id, env::current_account_id());
         assert!(
@@ -203,7 +219,7 @@ impl TokenFactory {
             meta: token_args.metadata,
             backup_trigger_account_id: token_args.backup_trigger_account_id.map(|a| a.into()),
             price_oracle_account_id: token_args.price_oracle_account_id.into(),
-            asset_id: token_args.token_id.into(),
+            asset_id: whitelisted_token.asset_id.clone(),
             minimum_unlock_price,
         };
 
@@ -222,7 +238,15 @@ impl TokenFactory {
 
         assert!(
             self.tokens.insert(&token_id, &args).is_none(),
-            "Token ID {} is already taken", token_id
+            "Token ID {} is already taken",
+            token_id
+        );
+
+        log!(
+            "Creating token {} with asset {} at price {}",
+            token_account_id,
+            whitelisted_token.asset_id,
+            price
         );
 
         let storage_balance_used =
@@ -232,11 +256,10 @@ impl TokenFactory {
             .create_account()
             .transfer(required_balance - storage_balance_used)
             .deploy_contract(FT_WASM_CODE.to_vec())
-            .function_call(b"new".to_vec(),
-                           serde_json::to_vec(&args).unwrap(), 0, GAS)
+            .function_call(b"new".to_vec(), serde_json::to_vec(&args).unwrap(), 0, GAS)
     }
 
-    fn format_title (s: String) -> String {
+    fn format_title(s: String) -> String {
         s.chars().filter(|c| !c.is_whitespace()).collect()
     }
 }
@@ -246,15 +269,15 @@ pub mod u64_dec_format {
     use near_sdk::serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(num: &u64, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         serializer.serialize_str(&num.to_string())
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
-        where
-            D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         String::deserialize(deserializer)?
             .parse()
@@ -267,19 +290,18 @@ pub mod u128_dec_format {
     use near_sdk::serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(num: &u128, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         serializer.serialize_str(&num.to_string())
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
-        where
-            D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         String::deserialize(deserializer)?
             .parse()
             .map_err(de::Error::custom)
     }
 }
-

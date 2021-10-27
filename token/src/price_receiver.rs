@@ -119,12 +119,17 @@ impl OraclePriceReceiver for Contract {
         for AssetOptionalPrice { asset_id, price } in data.prices {
             if asset_id == self.asset_id {
                 if let Some(price) = price {
+                    log!(
+                        "maybe_unlock if {}/{} >= {}/{}",
+                        price.multiplier,
+                        price.decimals,
+                        self.minimum_unlock_price.multiplier,
+                        self.minimum_unlock_price.decimals
+                    );
                     if price >= self.minimum_unlock_price {
-                        log!("maybe_unlock {}/{} >= {}/{}", price.multiplier, price.decimals, self.minimum_unlock_price.multiplier, self.minimum_unlock_price.decimals);
                         self.maybe_unlock();
                         return;
                     }
-                    log!("maybe_lock {}/{} < {}/{}", price.multiplier, price.decimals, self.minimum_unlock_price.multiplier, self.minimum_unlock_price.decimals);
                 }
                 self.maybe_lock();
                 return;
