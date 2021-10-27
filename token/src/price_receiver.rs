@@ -151,7 +151,7 @@ impl Contract {
                 initiated_timestamp,
             } => {
                 let timestamp = env::block_timestamp();
-                if initiated_timestamp + UNLOCKING_DURATION < timestamp {
+                if initiated_timestamp + UNLOCKING_DURATION > timestamp {
                     log!(
                         "Still unlocking, unlocks at {}, but current time is {}",
                         initiated_timestamp + UNLOCKING_DURATION,

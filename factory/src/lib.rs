@@ -6,7 +6,7 @@ use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json;
 use near_sdk::{
-    env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise
+    env, near_bindgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise, log
 };
 
 near_sdk::setup_alloc!();
@@ -17,10 +17,10 @@ const EXTRA_BYTES: usize = 10000;
 const GAS: Gas = 50_000_000_000_000;
 type TokenId = String;
 
-pub fn is_valid_token_id(token_id: &TokenId) -> bool {
+pub fn is_valid_symbol(token_id: &TokenId) -> bool {
     for c in token_id.as_bytes() {
         match c {
-            b'0'..=b'9' | b'a'..=b'z' | b'_' => (),
+            b'0'..=b'9' | b'a'..=b'z' | b'_' | b'-' => (),
             _ => return false,
         }
     }
@@ -106,6 +106,7 @@ impl TokenFactory {
 
     #[private]
     pub fn whitelist_token(&mut self, token_id: ValidAccountId, title: String, decimals: u8) {
+        assert!(is_valid_symbol(&title), "Invalid Token symbol");
         self.whitelisted_tokens.insert(&(token_id.into()),
                                        &WhitelistedToken{title, decimals});
     }
@@ -115,16 +116,6 @@ impl TokenFactory {
             * STORAGE_PRICE_PER_BYTE)
             .into()
     }
-
-    /*
-    pub fn get_required_deposit(&self, args: TokenArgs, account_id: ValidAccountId) -> U128 {
-        let args_deposit = self.get_min_attached_balance(&args);
-        if let Some(previous_balance) = self.storage_deposits.get(account_id.as_ref()) {
-            args_deposit.saturating_sub(previous_balance).into()
-        } else {
-            (self.storage_balance_cost + args_deposit).into()
-        }
-    }*/
 
     #[payable]
     pub fn storage_deposit(&mut self) {
@@ -151,6 +142,13 @@ impl TokenFactory {
             .collect()
     }
 
+    pub fn get_whitelisted_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenAccountId> {
+        let token_ids = self.whitelisted_tokens.keys_as_vector();
+        (from_index..std::cmp::min(from_index + limit, token_ids.len()))
+            .filter_map(|token_id| token_ids.get(token_id))
+            .collect()
+    }
+
     pub fn get_token(&self, token_id: TokenId) -> Option<TokenArgs> {
         self.tokens.get(&token_id)
     }
@@ -160,47 +158,54 @@ impl TokenFactory {
         if env::attached_deposit() > 0 {
             self.storage_deposit();
         }
-        token_args.metadata.assert_valid();
 
         let whitelisted_token = self.whitelisted_tokens.get(&(token_args.token_id.clone().into())).expect("Token wasn't whitelisted");
-        let token_name = whitelisted_token.title;
+        let token_name = TokenFactory::format_title(whitelisted_token.title);
         let token_decimals = whitelisted_token.decimals;
+
+        assert_eq!(token_args.metadata.decimals, token_decimals, "Wrong decimals");
 
         let minimum_unlock_price = Price {
             multiplier: token_args.target_price.0,
-            decimals: token_args.metadata.decimals
+            decimals: token_decimals + 4
         };
 
-        assert_eq!(token_decimals + 4, token_args.metadata.decimals, "Wrong decimals");
-        assert!(token_args.target_price.0 > 10000, "Wrong target price {}", token_args.target_price.0);
-
-        //let target_price_short: u128 = (token_args.target_price.0 * 10_u128.pow((token_args.metadata.decimals - token_decimals) as u32));
         let target_price_short: u128 = token_args.target_price.0 / 10000;
-        assert!(target_price_short > 0, "Wrong target price {}", target_price_short);
+        let target_price_remainder: u128 = token_args.target_price.0 % 10000;
 
-        token_args.metadata.name = format!("{} to ${}", token_name, target_price_short);
-        token_args.metadata.symbol = format!("{}@{}", token_name, target_price_short);
+        let price = if target_price_remainder > 0 {
+           format!("{}.{}", target_price_short, target_price_remainder)
+        } else {
+            format!("{}", target_price_short)
+        };
+        assert!(token_args.target_price.0 > 0, "Wrong target price");
 
-        let token_id = format!("{}_{}", token_name, token_args.target_price.0).to_ascii_lowercase();
-        assert!(is_valid_token_id(&token_id), "Invalid Symbol");
+        token_args.metadata.name = format!("{} at ${}", token_name, price);
+        token_args.metadata.symbol = format!("{}@{}", token_name, price);
+
+        token_args.metadata.assert_valid();
+
+
+        let token_id = format!("{}-{}-{:04}",
+                               token_name,
+                               target_price_short,
+                               target_price_remainder
+        ).to_ascii_lowercase();
+
         let token_account_id = format!("{}.{}", token_id, env::current_account_id());
         assert!(
             env::is_valid_account_id(token_account_id.as_bytes()),
             "Token Account ID is invalid"
         );
 
-
         let args: TokenArgs = TokenArgs {
-            locked_token_account_id: token_account_id.clone(),
+            locked_token_account_id: token_args.token_id.clone().into(),
             meta: token_args.metadata,
             backup_trigger_account_id: token_args.backup_trigger_account_id.map(|a| a.into()),
             price_oracle_account_id: token_args.price_oracle_account_id.into(),
             asset_id: token_args.token_id.into(),
             minimum_unlock_price,
         };
-
-
-
 
         let account_id = env::predecessor_account_id();
 
@@ -229,6 +234,10 @@ impl TokenFactory {
             .deploy_contract(FT_WASM_CODE.to_vec())
             .function_call(b"new".to_vec(),
                            serde_json::to_vec(&args).unwrap(), 0, GAS)
+    }
+
+    fn format_title (s: String) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
     }
 }
 

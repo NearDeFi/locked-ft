@@ -105,7 +105,12 @@ impl ExtSelf for Contract {
     fn after_ft_transfer(&mut self, account_id: AccountId, balance: U128) -> bool {
         let promise_success = is_promise_success();
         if promise_success {
-            self.ft.internal_storage_unregister(None);
+            if let Some(balance) = self.ft.accounts.get(&account_id) {
+                if balance == 0 {
+                    self.ft.accounts.remove(&account_id);
+                    Promise::new(account_id).transfer(self.storage_balance_bounds().min.0);
+                }
+            }
         } else {
             log!("Failed to transfer {} to account {}", account_id, balance.0);
             self.ft.internal_deposit(&account_id, balance.into());
