@@ -111,7 +111,10 @@ impl TokenFactory {
         title: String,
         decimals: u8,
     ) {
-        assert!(is_valid_symbol(&title), "Invalid Token symbol");
+        assert!(
+            is_valid_symbol(&title.to_ascii_lowercase()),
+            "Invalid Token symbol"
+        );
         self.whitelisted_tokens.insert(
             &(token_id.into()),
             &WhitelistedToken {
