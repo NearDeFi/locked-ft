@@ -17,8 +17,8 @@ const FT_WASM_CODE: &[u8] = include_bytes!("../../token/res/locked_ft.wasm");
 
 const EXTRA_BYTES: usize = 10000;
 const GAS: Gas = 50_000_000_000_000;
-const GAS_FT_METADATA_READ: Gas = 5_000_000_000_000;
-const GAS_FT_METADATA_WRITE: Gas = 5_000_000_000_000;
+const GAS_FT_METADATA_READ: Gas = 25_000_000_000_000;
+const GAS_FT_METADATA_WRITE: Gas = 25_000_000_000_000;
 const NO_DEPOSIT: Balance = 0;
 
 type TokenId = String;
@@ -66,7 +66,8 @@ pub struct TokenFactory {
     pub whitelisted_tokens: UnorderedMap<AccountId, WhitelistedToken>,
 }
 
-#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct WhitelistedToken {
     pub asset_id: String,
     pub metadata: FungibleTokenMetadata
@@ -130,7 +131,7 @@ impl TokenFactory {
         token_id: AccountId,
         asset_id: AssetId) {
         assert!(
-            is_valid_symbol(&ft_metadata.name.to_ascii_lowercase()),
+            is_valid_symbol(&ft_metadata.symbol.to_ascii_lowercase()),
             "Invalid Token symbol"
         );
 
@@ -200,9 +201,8 @@ impl TokenFactory {
             .collect()
     }
 
-    pub fn get_whitelisted_token(&self, token_id: TokenAccountId) -> (AccountId, FungibleTokenMetadata) {
-        let token = self.whitelisted_tokens.get(&token_id).expect("Token not found");
-        return (token.asset_id, token.metadata);
+    pub fn get_whitelisted_token(&self, token_id: TokenAccountId) -> WhitelistedToken {
+        self.whitelisted_tokens.get(&token_id).expect("Token not found")
     }
 
     pub fn get_token(&self, token_id: TokenId) -> Option<TokenArgs> {
@@ -219,7 +219,7 @@ impl TokenFactory {
             .whitelisted_tokens
             .get(&(token_args.token_id.clone().into()))
             .expect("Token wasn't whitelisted");
-        let token_name = TokenFactory::format_title(whitelisted_token.metadata.name.clone());
+        let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
         let token_decimals = whitelisted_token.metadata.decimals;
 
         assert!(token_decimals > 0 && token_name != "", "Missing token metadata");
