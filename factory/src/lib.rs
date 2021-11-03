@@ -209,6 +209,13 @@ impl TokenFactory {
         self.tokens.get(&token_id)
     }
 
+    #[private]
+    pub fn update_token_icon(&mut self, token_id: TokenAccountId, icon: String) {
+        let mut token = self.whitelisted_tokens.get(&token_id).expect("Token wasn't whitelisted");
+        token.metadata.icon = Some(icon);
+        self.whitelisted_tokens.insert(&token_id, &token);
+    }
+
     #[payable]
     pub fn create_token(&mut self, token_args: InputTokenArgs) -> Promise {
         if env::attached_deposit() > 0 {
