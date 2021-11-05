@@ -210,9 +210,9 @@ impl TokenFactory {
     }
 
     #[private]
-    pub fn update_token_icon(&mut self, token_id: TokenAccountId, icon: String) {
+    pub fn update_token_icon(&mut self, token_id: TokenAccountId, icon: Option<String>) {
         let mut token = self.whitelisted_tokens.get(&token_id).expect("Token wasn't whitelisted");
-        token.metadata.icon = Some(icon);
+        token.metadata.icon = icon;
         self.whitelisted_tokens.insert(&token_id, &token);
     }
 
