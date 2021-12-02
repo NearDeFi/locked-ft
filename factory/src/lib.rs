@@ -22,16 +22,8 @@ const GAS_FT_METADATA_WRITE: Gas = 25_000_000_000_000;
 const NO_DEPOSIT: Balance = 0;
 
 type TokenId = String;
-
-pub fn is_valid_symbol(token_id: &TokenId) -> bool {
-    for c in token_id.as_bytes() {
-        match c {
-            b'0'..=b'9' | b'a'..=b'z' | b'_' | b'-' => (),
-            _ => return false,
-        }
-    }
-    true
-}
+pub type AssetId = String;
+pub type TokenAccountId = AccountId;
 
 #[ext_contract(ext_ft)]
 pub trait ExtFT {
@@ -69,13 +61,13 @@ pub struct TokenFactory {
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct WhitelistedToken {
-    pub asset_id: String,
-    pub metadata: FungibleTokenMetadata
+    pub asset_id: AssetId,
+    pub metadata: FungibleTokenMetadata,
 }
 
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct InputTokenArgs {
+pub struct TokenArgsInput {
     token_id: ValidAccountId,
     target_price: U128,
     backup_trigger_account_id: Option<AccountId>,
@@ -90,9 +82,6 @@ pub struct Price {
     decimals: u8,
 }
 
-pub type AssetId = String;
-pub type TokenAccountId = AccountId;
-
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct TokenArgs {
@@ -102,6 +91,37 @@ pub struct TokenArgs {
     pub price_oracle_account_id: AccountId,
     pub asset_id: AssetId,
     pub minimum_unlock_price: Price,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct TokenArgsOutput {
+    pub token_id: Option<TokenAccountId>,
+    pub locked_token_account_id: TokenAccountId,
+    pub meta: FungibleTokenMetadata,
+    pub backup_trigger_account_id: Option<AccountId>,
+    pub price_oracle_account_id: AccountId,
+    pub asset_id: AssetId,
+    pub minimum_unlock_price: Price,
+}
+
+
+impl TokenArgsOutput {
+    fn from(token_args: Option<TokenArgs>, token_id: Option<TokenAccountId>) -> Option<TokenArgsOutput> {
+        if let Some(token) = token_args {
+            Some(TokenArgsOutput {
+                token_id,
+                locked_token_account_id: token.locked_token_account_id,
+                meta: token.meta,
+                backup_trigger_account_id: token.backup_trigger_account_id,
+                price_oracle_account_id: token.price_oracle_account_id,
+                asset_id: token.asset_id,
+                minimum_unlock_price: token.minimum_unlock_price,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[near_bindgen]
@@ -136,9 +156,9 @@ impl TokenFactory {
         );
 
         self.whitelisted_tokens.insert(
-            &(token_id.into()),
+            &token_id,
             &WhitelistedToken {
-                asset_id: asset_id.into(),
+                asset_id,
                 metadata: ft_metadata,
             },
         );
@@ -164,9 +184,8 @@ impl TokenFactory {
     }
 
     fn get_min_attached_balance(&self, args: &TokenArgs) -> u128 {
-        ((FT_WASM_CODE.len() + EXTRA_BYTES + args.try_to_vec().unwrap().len() * 2) as Balance
-            * STORAGE_PRICE_PER_BYTE)
-            .into()
+        (FT_WASM_CODE.len() + EXTRA_BYTES + args.try_to_vec().unwrap().len() * 2) as Balance
+            * STORAGE_PRICE_PER_BYTE
     }
 
     #[payable]
@@ -187,10 +206,11 @@ impl TokenFactory {
         self.tokens.len()
     }
 
-    pub fn get_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenArgs> {
+    pub fn get_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenArgsOutput> {
+        let keys = self.tokens.keys_as_vector();
         let tokens = self.tokens.values_as_vector();
         (from_index..std::cmp::min(from_index + limit, tokens.len()))
-            .filter_map(|index| tokens.get(index))
+            .filter_map(|index| TokenArgsOutput::from(tokens.get(index), keys.get(index)))
             .collect()
     }
 
@@ -205,19 +225,26 @@ impl TokenFactory {
         self.whitelisted_tokens.get(&token_id).expect("Token not found")
     }
 
-    pub fn get_token(&self, token_id: TokenId) -> Option<TokenArgs> {
-        self.tokens.get(&token_id)
+    pub fn get_token(&self, token_id: TokenId) -> Option<TokenArgsOutput> {
+        TokenArgsOutput::from(self.tokens.get(&token_id), Some(token_id))
     }
 
     #[private]
-    pub fn update_token_icon(&mut self, token_id: TokenAccountId, icon: Option<String>) {
+    pub fn update_whitelisted_token_icon(&mut self, token_id: TokenAccountId, icon: Option<String>) {
         let mut token = self.whitelisted_tokens.get(&token_id).expect("Token wasn't whitelisted");
         token.metadata.icon = icon;
         self.whitelisted_tokens.insert(&token_id, &token);
     }
 
+    #[private]
+    pub fn update_token_icon(&mut self, token_id: TokenAccountId, icon: Option<String>) {
+        let mut token = self.tokens.get(&token_id).expect("Token wasn't created");
+        token.meta.icon = icon;
+        self.tokens.insert(&token_id, &token);
+    }
+
     #[payable]
-    pub fn create_token(&mut self, token_args: InputTokenArgs) -> Promise {
+    pub fn create_token(&mut self, token_args: TokenArgsInput) -> Promise {
         if env::attached_deposit() > 0 {
             self.storage_deposit();
         }
@@ -229,7 +256,7 @@ impl TokenFactory {
         let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
         let token_decimals = whitelisted_token.metadata.decimals;
 
-        assert!(token_decimals > 0 && token_name != "", "Missing token metadata");
+        assert!(token_decimals > 0 && !token_name.is_empty(), "Missing token metadata");
 
         let mut metadata = whitelisted_token.metadata;
 
@@ -268,8 +295,8 @@ impl TokenFactory {
         let args: TokenArgs = TokenArgs {
             locked_token_account_id: token_args.token_id.clone().into(),
             meta: metadata,
-            backup_trigger_account_id: token_args.backup_trigger_account_id.map(|a| a.into()),
-            price_oracle_account_id: token_args.price_oracle_account_id.into(),
+            backup_trigger_account_id: token_args.backup_trigger_account_id,
+            price_oracle_account_id: token_args.price_oracle_account_id,
             asset_id: whitelisted_token.asset_id.clone(),
             minimum_unlock_price,
         };
@@ -348,11 +375,21 @@ pub mod u128_dec_format {
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
-    where
-        D: Deserializer<'de>,
+        where
+            D: Deserializer<'de>,
     {
         String::deserialize(deserializer)?
             .parse()
             .map_err(de::Error::custom)
     }
+}
+
+pub fn is_valid_symbol(token_id: &str) -> bool {
+    for c in token_id.as_bytes() {
+        match c {
+            b'0'..=b'9' | b'a'..=b'z' | b'_' | b'-' => (),
+            _ => return false,
+        }
+    }
+    true
 }
