@@ -221,6 +221,13 @@ impl TokenFactory {
             .collect()
     }
 
+    pub fn get_whitelisted_tokens(&self, from_index: u64, limit: u64) -> Vec<WhitelistedToken> {
+        self.get_whitelisted_token_tickers(from_index, limit)
+           .iter()
+           .map(|token_id| self.whitelisted_tokens.get(&token_id).expect("Token not found"))
+           .collect()
+    }
+
     pub fn get_whitelisted_token(&self, token_id: TokenAccountId) -> WhitelistedToken {
         self.whitelisted_tokens.get(&token_id).expect("Token not found")
     }
