@@ -3,7 +3,7 @@ use near_sdk::{
     AccountId, Balance, BorshStorageKey, env, ext_contract, Gas, log, near_bindgen, PanicOnDefault, Promise,
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LookupMap, UnorderedMap};
+use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
 use near_sdk::env::STORAGE_PRICE_PER_BYTE;
 use near_sdk::json_types::{U128, ValidAccountId};
 use near_sdk::serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ const GAS: Gas = 50_000_000_000_000;
 const GAS_FT_METADATA_READ: Gas = 25_000_000_000_000;
 const GAS_FT_METADATA_WRITE: Gas = 25_000_000_000_000;
 const NO_DEPOSIT: Balance = 0;
+const BACKUP_TRIGGER_ACCOUNT_ID: &str = "dreamproject.near";
 
 type TokenId = String;
 pub type AssetId = String;
@@ -47,6 +48,7 @@ enum StorageKey {
     StorageDeposits,
     WhitelistedTokens,
     WhitelistedTokensV1,
+    WhitelistedPriceOracles
 }
 
 #[near_bindgen]
@@ -56,6 +58,7 @@ pub struct TokenFactory {
     pub storage_deposits: LookupMap<AccountId, Balance>,
     pub storage_balance_cost: Balance,
     pub whitelisted_tokens: UnorderedMap<AccountId, WhitelistedToken>,
+    pub whitelisted_price_oracles: UnorderedSet<AccountId>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
@@ -70,8 +73,7 @@ pub struct WhitelistedToken {
 pub struct TokenArgsInput {
     token_id: ValidAccountId,
     target_price: U128,
-    backup_trigger_account_id: Option<AccountId>,
-    price_oracle_account_id: AccountId,
+    price_oracle_account_id: Option<ValidAccountId>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Copy)]
@@ -104,7 +106,6 @@ pub struct TokenArgsOutput {
     pub asset_id: AssetId,
     pub minimum_unlock_price: Price,
 }
-
 
 impl TokenArgsOutput {
     fn from(token_args: Option<TokenArgs>, token_id: Option<TokenAccountId>) -> Option<TokenArgsOutput> {
@@ -142,6 +143,7 @@ impl TokenFactory {
             storage_deposits,
             storage_balance_cost,
             whitelisted_tokens: UnorderedMap::new(StorageKey::WhitelistedTokens),
+            whitelisted_price_oracles: UnorderedSet::new(StorageKey::WhitelistedPriceOracles)
         }
     }
 
@@ -183,9 +185,14 @@ impl TokenFactory {
             ))
     }
 
+    #[private]
+    pub fn whitelist_price_oracle(&mut self, account_id: ValidAccountId) {
+        let account: AccountId = account_id.into();
+        self.whitelisted_price_oracles.insert(&account);
+    }
+
     fn get_min_attached_balance(&self, args: &TokenArgs) -> u128 {
-        (FT_WASM_CODE.len() + EXTRA_BYTES + args.try_to_vec().unwrap().len() * 2) as Balance
-            * STORAGE_PRICE_PER_BYTE
+        (FT_WASM_CODE.len() + EXTRA_BYTES + args.try_to_vec().unwrap().len() * 2) as Balance * STORAGE_PRICE_PER_BYTE
     }
 
     #[payable]
@@ -209,20 +216,21 @@ impl TokenFactory {
     pub fn get_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenArgsOutput> {
         let keys = self.tokens.keys_as_vector();
         let tokens = self.tokens.values_as_vector();
-        (from_index..std::cmp::min(from_index + limit, tokens.len()))
-            .filter_map(|index| TokenArgsOutput::from(tokens.get(index), keys.get(index)))
-            .collect()
+        (from_index..std::cmp::min(from_index + limit, tokens.len())).filter_map(|index| TokenArgsOutput::from(tokens.get(index), keys.get(index))).collect()
     }
 
-    pub fn get_whitelisted_token_tickers(&self, from_index: u64, limit: u64) -> Vec<TokenAccountId> {
+    pub fn get_whitelisted_price_oracles(&self, from_index: u64, limit: u64) -> Vec<AccountId> {
+        let contract_ids = self.whitelisted_price_oracles.as_vector();
+        (from_index..std::cmp::min(from_index + limit, contract_ids.len())).filter_map(|contract_id| contract_ids.get(contract_id)).collect()
+    }
+
+    pub fn get_whitelisted_token_accounts(&self, from_index: u64, limit: u64) -> Vec<TokenAccountId> {
         let token_ids = self.whitelisted_tokens.keys_as_vector();
-        (from_index..std::cmp::min(from_index + limit, token_ids.len()))
-            .filter_map(|token_id| token_ids.get(token_id))
-            .collect()
+        (from_index..std::cmp::min(from_index + limit, token_ids.len())).filter_map(|token_id| token_ids.get(token_id)).collect()
     }
 
     pub fn get_whitelisted_tokens(&self, from_index: u64, limit: u64) -> Vec<WhitelistedToken> {
-        self.get_whitelisted_token_tickers(from_index, limit)
+        self.get_whitelisted_token_accounts(from_index, limit)
            .iter()
            .map(|token_id| self.whitelisted_tokens.get(&token_id).expect("Token not found"))
            .collect()
@@ -234,6 +242,33 @@ impl TokenFactory {
 
     pub fn get_token(&self, token_id: TokenId) -> Option<TokenArgsOutput> {
         TokenArgsOutput::from(self.tokens.get(&token_id), Some(token_id))
+    }
+
+    pub fn get_token_name(&self, token_args: TokenArgsInput) -> AccountId {
+        let whitelisted_token = self.internal_get_whitelisted_token(&(token_args.token_id.clone().into()));
+        let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
+        let target_price_short: u128 = token_args.target_price.0 / 10000;
+        let target_price_remainder: u128 = token_args.target_price.0 % 10000;
+
+        let token_id = format!(
+            "{}-{}-{:04}",
+            token_name, target_price_short, target_price_remainder
+        ).to_ascii_lowercase();
+
+        let token_account_id = format!("{}.{}", token_id, env::current_account_id());
+        assert!(
+            env::is_valid_account_id(token_account_id.as_bytes()),
+            "Token Account ID is invalid"
+        );
+
+        token_account_id
+    }
+
+    fn internal_get_whitelisted_token(&self, token_id: &AccountId) -> WhitelistedToken {
+        self
+           .whitelisted_tokens
+           .get(&token_id)
+           .expect("Token wasn't whitelisted")
     }
 
     #[private]
@@ -256,10 +291,11 @@ impl TokenFactory {
             self.storage_deposit();
         }
 
-        let whitelisted_token = self
-            .whitelisted_tokens
-            .get(&(token_args.token_id.clone().into()))
-            .expect("Token wasn't whitelisted");
+        let whitelisted_token = self.internal_get_whitelisted_token(&(token_args.token_id.clone().into()));
+
+        let input_price_oracle_account_id: AccountId = token_args.price_oracle_account_id.expect("Price Oracle Contract is missing").into();
+        assert!(self.whitelisted_price_oracles.contains(&input_price_oracle_account_id), "Price Oracle wasn't whitelisted");
+
         let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
         let token_decimals = whitelisted_token.metadata.decimals;
 
@@ -302,8 +338,8 @@ impl TokenFactory {
         let args: TokenArgs = TokenArgs {
             locked_token_account_id: token_args.token_id.clone().into(),
             meta: metadata,
-            backup_trigger_account_id: token_args.backup_trigger_account_id,
-            price_oracle_account_id: token_args.price_oracle_account_id,
+            backup_trigger_account_id: Some(BACKUP_TRIGGER_ACCOUNT_ID.into()),
+            price_oracle_account_id: input_price_oracle_account_id,
             asset_id: whitelisted_token.asset_id.clone(),
             minimum_unlock_price,
         };

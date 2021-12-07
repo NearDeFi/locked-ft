@@ -20,6 +20,7 @@ impl TokenFactory {
             pub storage_deposits: LookupMap<AccountId, Balance>,
             pub storage_balance_cost: Balance,
             pub whitelisted_tokens: UnorderedMap<AccountId, WhitelistedTokenOld>,
+            pub whitelisted_price_oracles: UnorderedSet<AccountId>
         }
 
         let old_contract: TokenFactoryOld = env::state_read().expect("Old state doesn't exist");
@@ -50,6 +51,7 @@ impl TokenFactory {
             storage_deposits: old_contract.storage_deposits,
             storage_balance_cost: old_contract.storage_balance_cost,
             whitelisted_tokens: whitelisted_tokens_new,
+            whitelisted_price_oracles: UnorderedSet::new(StorageKey::WhitelistedPriceOracles)
         }
     }
 }
