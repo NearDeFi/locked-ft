@@ -211,20 +211,16 @@ impl TokenFactory {
         self.tokens.len()
     }
 
-    pub fn get_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenArgsOutput> {
-        let keys = self.tokens.keys_as_vector();
-        let tokens = self.tokens.values_as_vector();
-        (from_index..std::cmp::min(from_index + limit, tokens.len())).filter_map(|index| TokenArgsOutput::from(tokens.get(index), keys.get(index))).collect()
-    }
-
     pub fn get_whitelisted_price_oracles(&self, from_index: u64, limit: u64) -> Vec<AccountId> {
         let contract_ids = self.whitelisted_price_oracles.as_vector();
-        (from_index..std::cmp::min(from_index + limit, contract_ids.len())).filter_map(|contract_id| contract_ids.get(contract_id)).collect()
+        (from_index..std::cmp::min(from_index + limit, contract_ids.len()))
+           .filter_map(|contract_id| contract_ids.get(contract_id)).collect()
     }
 
-    pub fn get_whitelisted_token_accounts(&self, from_index: u64, limit: u64) -> Vec<TokenAccountId> {
+    pub fn get_whitelisted_token_account_ids(&self, from_index: u64, limit: u64) -> Vec<TokenAccountId> {
         let token_ids = self.whitelisted_tokens.keys_as_vector();
-        (from_index..std::cmp::min(from_index + limit, token_ids.len())).filter_map(|token_id| token_ids.get(token_id)).collect()
+        (from_index..std::cmp::min(from_index + limit, token_ids.len()))
+           .filter_map(|token_id| token_ids.get(token_id)).collect()
     }
 
     pub fn get_whitelisted_tokens(&self, from_index: u64, limit: u64) -> Vec<WhitelistedToken> {
@@ -236,6 +232,13 @@ impl TokenFactory {
 
     pub fn get_whitelisted_token(&self, token_id: TokenAccountId) -> WhitelistedToken {
         self.whitelisted_tokens.get(&token_id).expect("Token not found")
+    }
+
+    pub fn get_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenArgsOutput> {
+        let keys = self.tokens.keys_as_vector();
+        let tokens = self.tokens.values_as_vector();
+        (from_index..std::cmp::min(from_index + limit, tokens.len()))
+           .filter_map(|index| TokenArgsOutput::from(tokens.get(index), keys.get(index))).collect()
     }
 
     pub fn get_token(&self, token_id: TokenId) -> Option<TokenArgsOutput> {
