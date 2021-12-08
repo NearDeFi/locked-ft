@@ -174,9 +174,8 @@ impl TokenFactory {
             ))
     }
 
-    /// mostly for test reasons to whitelist tokens with any metadata
     #[private]
-    pub fn whitelist_token_direct(&mut self, token_id: ValidAccountId,
+    pub fn whitelist_token_with_metadata(&mut self, token_id: ValidAccountId,
                                   asset_id: ValidAccountId,
                                   metadata: FungibleTokenMetadata) {
         self.internal_whitelist_token(&(token_id.into()), asset_id.into(), metadata);
@@ -189,22 +188,20 @@ impl TokenFactory {
         self.whitelisted_price_oracles.insert(&account);
     }
 
-    fn get_min_attached_balance(&self, args: &TokenArgs) -> u128 {
-        (FT_WASM_CODE.len() + EXTRA_BYTES + args.try_to_vec().unwrap().len() * 2) as Balance * STORAGE_PRICE_PER_BYTE
-    }
-
     #[payable]
     pub fn storage_deposit(&mut self) {
         let account_id = env::predecessor_account_id();
         let deposit = env::attached_deposit();
         if let Some(previous_balance) = self.storage_deposits.get(&account_id) {
-            self.storage_deposits
-                .insert(&account_id, &(previous_balance + deposit));
+            self.storage_deposits.insert(&account_id, &(previous_balance + deposit));
         } else {
             assert!(deposit >= self.storage_balance_cost, "Deposit is too low");
-            self.storage_deposits
-                .insert(&account_id, &(deposit - self.storage_balance_cost));
+            self.storage_deposits.insert(&account_id, &(deposit - self.storage_balance_cost));
         }
+    }
+
+    fn get_min_attached_balance(&self, args: &TokenArgs) -> u128 {
+        (FT_WASM_CODE.len() + EXTRA_BYTES + args.try_to_vec().unwrap().len() * 2) as Balance * STORAGE_PRICE_PER_BYTE
     }
 
     pub fn get_number_of_tokens(&self) -> u64 {
@@ -213,8 +210,7 @@ impl TokenFactory {
 
     pub fn get_whitelisted_price_oracles(&self, from_index: u64, limit: u64) -> Vec<AccountId> {
         let contract_ids = self.whitelisted_price_oracles.as_vector();
-        (from_index..std::cmp::min(from_index + limit, contract_ids.len()))
-           .filter_map(|contract_id| contract_ids.get(contract_id)).collect()
+        (from_index..std::cmp::min(from_index + limit, contract_ids.len())).filter_map(|contract_id| contract_ids.get(contract_id)).collect()
     }
 
     pub fn get_whitelisted_token_account_ids(&self, from_index: u64, limit: u64) -> Vec<TokenAccountId> {
@@ -224,14 +220,12 @@ impl TokenFactory {
     }
 
     pub fn get_whitelisted_tokens(&self, from_index: u64, limit: u64) -> Vec<WhitelistedToken> {
-        self.get_whitelisted_token_accounts(from_index, limit)
-           .iter()
-           .map(|token_id| self.whitelisted_tokens.get(&token_id).expect("Token not found"))
+        self.get_whitelisted_token_account_ids(from_index, limit).iter().map(|token_id| self.whitelisted_tokens.get(token_id).expect("Token not found"))
            .collect()
     }
 
     pub fn get_whitelisted_token(&self, token_id: TokenAccountId) -> WhitelistedToken {
-        self.whitelisted_tokens.get(&token_id).expect("Token not found")
+        self.internal_get_whitelisted_token(&token_id)
     }
 
     pub fn get_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenArgsOutput> {
@@ -247,7 +241,7 @@ impl TokenFactory {
 
     pub fn get_token_name(&self, token_args: TokenArgsInput) -> AccountId {
         let whitelisted_token = self.internal_get_whitelisted_token(&(token_args.token_id.clone().into()));
-        let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
+        let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol);
         let target_price_short: u128 = token_args.target_price.0 / 10000;
         let target_price_remainder: u128 = token_args.target_price.0 % 10000;
 
@@ -257,10 +251,8 @@ impl TokenFactory {
         ).to_ascii_lowercase();
 
         let token_account_id = format!("{}.{}", token_id, env::current_account_id());
-        assert!(
-            env::is_valid_account_id(token_account_id.as_bytes()),
-            "Token Account ID is invalid"
-        );
+
+        assert!(env::is_valid_account_id(token_account_id.as_bytes()), "Token Account ID is invalid");
 
         token_account_id
     }
@@ -268,43 +260,31 @@ impl TokenFactory {
     fn internal_whitelist_token(&mut self,
                                 token_id: &AccountId,
                                 asset_id: AccountId,
-                                metadata: FungibleTokenMetadata){
-        assert!(
-            is_valid_symbol(&metadata.symbol.to_ascii_lowercase()),
-            "Invalid Token symbol"
-        );
+                                metadata: FungibleTokenMetadata) {
+        assert!(is_valid_symbol(&metadata.symbol.to_ascii_lowercase()), "Invalid Token symbol");
 
-        self.whitelisted_tokens.insert(
-            &token_id,
-            &WhitelistedToken {
-                asset_id,
-                metadata,
-            },
-        );
+        self.whitelisted_tokens.insert(token_id, &WhitelistedToken { asset_id, metadata });
     }
 
     fn internal_get_whitelisted_token(&self, token_id: &AccountId) -> WhitelistedToken {
-        self.whitelisted_tokens.get(&token_id).expect("Token wasn't whitelisted")
+        self.whitelisted_tokens.get(token_id).expect("Token wasn't whitelisted")
+    }
+
+    fn internal_get_token(&self, token_id: &AccountId) -> TokenArgs {
+        self.tokens.get(token_id).expect("Token wasn't created")
     }
 
     #[private]
-    pub fn update_whitelisted_token_icon(&mut self, token_id: TokenAccountId, icon: Option<String>) {
+    pub fn update_whitelisted_token_metadata(&mut self, token_id: TokenAccountId, metadata: FungibleTokenMetadata) {
         let mut token = self.internal_get_whitelisted_token(&token_id);
-        token.metadata.icon = icon;
+        token.metadata = metadata;
         self.whitelisted_tokens.insert(&token_id, &token);
     }
 
     #[private]
-    pub fn update_whitelisted_token_symbol(&mut self, token_id: TokenAccountId, symbol: String) {
-        let mut token = self.internal_get_whitelisted_token(&token_id);
-        token.metadata.symbol = symbol;
-        self.whitelisted_tokens.insert(&token_id, &token);
-    }
-
-    #[private]
-    pub fn update_token_icon(&mut self, token_id: TokenAccountId, icon: Option<String>) {
-        let mut token = self.tokens.get(&token_id).expect("Token wasn't created");
-        token.meta.icon = icon;
+    pub fn update_token_metadata(&mut self, token_id: TokenAccountId, meta: FungibleTokenMetadata) {
+        let mut token = self.internal_get_token(&token_id);
+        token.meta = meta;
         self.tokens.insert(&token_id, &token);
     }
 
@@ -359,7 +339,7 @@ impl TokenFactory {
         );
 
         let args: TokenArgs = TokenArgs {
-            locked_token_account_id: token_args.token_id.clone().into(),
+            locked_token_account_id: token_args.token_id.into(),
             meta: metadata,
             backup_trigger_account_id: Some(BACKUP_TRIGGER_ACCOUNT_ID.into()),
             price_oracle_account_id: input_price_oracle_account_id,

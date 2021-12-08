@@ -53,4 +53,10 @@ impl TokenFactory {
             whitelisted_price_oracles: UnorderedSet::new(StorageKey::WhitelistedPriceOracles)
         }
     }
+
+    #[private]
+    pub fn migrate_11(&mut self)  {
+        // delete because of wrong name
+        self.tokens.remove(&"near-20-0000".to_string());
+    }
 }
