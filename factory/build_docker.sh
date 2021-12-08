@@ -25,4 +25,4 @@ docker start $NAME
 docker exec -it $NAME /bin/bash -c "rustup toolchain install stable-2021-10-21; rustup default stable-2021-10-21; rustup target add wasm32-unknown-unknown; cargo build --target wasm32-unknown-unknown --release"
 
 mkdir -p res
-cp $DIR/target/wasm32-unknown-unknown/release/factory.wasm $DIR/res/factory_release.wasm
+cp $DIR/target/wasm32-unknown-unknown/release/wentokensir.wasm $DIR/res/factory_release.wasm

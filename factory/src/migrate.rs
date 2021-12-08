@@ -19,8 +19,7 @@ impl TokenFactory {
             pub tokens: UnorderedMap<TokenId, TokenArgs>,
             pub storage_deposits: LookupMap<AccountId, Balance>,
             pub storage_balance_cost: Balance,
-            pub whitelisted_tokens: UnorderedMap<AccountId, WhitelistedTokenOld>,
-            pub whitelisted_price_oracles: UnorderedSet<AccountId>
+            pub whitelisted_tokens: UnorderedMap<AccountId, WhitelistedTokenOld>
         }
 
         let old_contract: TokenFactoryOld = env::state_read().expect("Old state doesn't exist");
@@ -35,8 +34,8 @@ impl TokenFactory {
                                                   asset_id: old_token.asset_id,
                                                   metadata: FungibleTokenMetadata {
                                                       spec: "ft-1.0.0".to_string(),
-                                                      name: old_token.title,
-                                                      symbol: "".to_string(),
+                                                      name: old_token.title.clone(),
+                                                      symbol: old_token.title,
                                                       icon: None,
                                                       reference: None,
                                                       reference_hash: None,

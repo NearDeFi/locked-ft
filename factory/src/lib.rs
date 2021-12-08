@@ -281,16 +281,20 @@ impl TokenFactory {
     }
 
     fn internal_get_whitelisted_token(&self, token_id: &AccountId) -> WhitelistedToken {
-        self
-           .whitelisted_tokens
-           .get(&token_id)
-           .expect("Token wasn't whitelisted")
+        self.whitelisted_tokens.get(&token_id).expect("Token wasn't whitelisted")
     }
 
     #[private]
     pub fn update_whitelisted_token_icon(&mut self, token_id: TokenAccountId, icon: Option<String>) {
-        let mut token = self.whitelisted_tokens.get(&token_id).expect("Token wasn't whitelisted");
+        let mut token = self.internal_get_whitelisted_token(&token_id);
         token.metadata.icon = icon;
+        self.whitelisted_tokens.insert(&token_id, &token);
+    }
+
+    #[private]
+    pub fn update_whitelisted_token_symbol(&mut self, token_id: TokenAccountId, symbol: String) {
+        let mut token = self.internal_get_whitelisted_token(&token_id);
+        token.metadata.symbol = symbol;
         self.whitelisted_tokens.insert(&token_id, &token);
     }
 
