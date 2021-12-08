@@ -152,18 +152,7 @@ impl TokenFactory {
         #[callback] ft_metadata: FungibleTokenMetadata,
         token_id: AccountId,
         asset_id: AssetId) {
-        assert!(
-            is_valid_symbol(&ft_metadata.symbol.to_ascii_lowercase()),
-            "Invalid Token symbol"
-        );
-
-        self.whitelisted_tokens.insert(
-            &token_id,
-            &WhitelistedToken {
-                asset_id,
-                metadata: ft_metadata,
-            },
-        );
+        self.internal_whitelist_token(&token_id, asset_id, ft_metadata);
     }
 
     #[private]
@@ -183,6 +172,15 @@ impl TokenFactory {
                 NO_DEPOSIT,
                 GAS_FT_METADATA_WRITE,
             ))
+    }
+
+    /// mostly for test reasons to whitelist tokens with any metadata
+    #[private]
+    pub fn whitelist_token_direct(&mut self, token_id: ValidAccountId,
+                                  asset_id: ValidAccountId,
+                                  metadata: FungibleTokenMetadata) {
+        self.internal_whitelist_token(&(token_id.into()), asset_id.into(), metadata);
+
     }
 
     #[private]
@@ -262,6 +260,24 @@ impl TokenFactory {
         );
 
         token_account_id
+    }
+
+    fn internal_whitelist_token(&mut self,
+                                token_id: &AccountId,
+                                asset_id: AccountId,
+                                metadata: FungibleTokenMetadata){
+        assert!(
+            is_valid_symbol(&metadata.symbol.to_ascii_lowercase()),
+            "Invalid Token symbol"
+        );
+
+        self.whitelisted_tokens.insert(
+            &token_id,
+            &WhitelistedToken {
+                asset_id,
+                metadata,
+            },
+        );
     }
 
     fn internal_get_whitelisted_token(&self, token_id: &AccountId) -> WhitelistedToken {
