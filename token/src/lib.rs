@@ -181,6 +181,8 @@ impl Contract {
         ))
     }
 
+    pub fn get_status (&self) -> Status { self.status }
+
     fn on_account_closed(&mut self, account_id: AccountId, balance: Balance) {
         log!("Closed @{} with {}", account_id, balance);
     }
