@@ -19,6 +19,7 @@ use near_sdk::{
 
 near_sdk::setup_alloc!();
 
+const OWNER_ID: &str = "dreamproject.near";
 const NO_DEPOSIT: Balance = 0;
 const ONE_YOCTO: Balance = 1;
 
@@ -179,6 +180,11 @@ impl Contract {
             NO_DEPOSIT,
             GAS_FOR_AFTER_FT_TRANSFER,
         ))
+    }
+
+    pub fn update_meta (&mut self, meta: FungibleTokenMetadata){
+        assert_eq!(env::predecessor_account_id(), OWNER_ID, "No Access");
+        self.meta = LazyOption::new(StorageKey::FtMeta, Some(&meta));
     }
 
     pub fn get_status (&self) -> Status { self.status }
