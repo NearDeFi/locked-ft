@@ -39,6 +39,7 @@ pub trait ExtContract {
         &mut self,
         token_id: AccountId,
         asset_id: AccountId,
+        ticker: Option<String>
     );
 }
 
@@ -64,7 +65,10 @@ pub struct TokenFactory {
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct WhitelistedToken {
+    // Asset to track for a price.
     pub asset_id: AssetId,
+    // Ticker will be used for child tokens. May be different with metadata.symbol (wNear -> NEAR)
+    pub ticker: Option<String>,
     pub metadata: FungibleTokenMetadata,
 }
 
@@ -88,11 +92,37 @@ pub struct Price {
 #[serde(crate = "near_sdk::serde")]
 pub struct TokenArgs {
     pub locked_token_account_id: TokenAccountId,
+    pub token_id: TokenId,
     pub meta: FungibleTokenMetadata,
     pub backup_trigger_account_id: Option<AccountId>,
     pub price_oracle_account_id: AccountId,
     pub asset_id: AssetId,
     pub minimum_unlock_price: Price,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct WhitelistedTokenOutput {
+    pub token_id: TokenAccountId,
+    pub asset_id: AssetId,
+    pub ticker: Option<String>,
+    pub metadata: FungibleTokenMetadata,
+}
+
+impl WhitelistedTokenOutput {
+    fn from(whitelisted_token: Option<WhitelistedToken>, token_id: TokenAccountId)
+            -> Option<WhitelistedTokenOutput> {
+        if let Some(token) = whitelisted_token {
+            Some(WhitelistedTokenOutput {
+                token_id,
+                asset_id: token.asset_id,
+                ticker: token.ticker,
+                metadata: token.metadata,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
@@ -151,15 +181,17 @@ impl TokenFactory {
         &mut self,
         #[callback] ft_metadata: FungibleTokenMetadata,
         token_id: AccountId,
-        asset_id: AssetId) {
-        self.internal_whitelist_token(&token_id, asset_id, ft_metadata);
+        asset_id: AssetId,
+        ticker: Option<String>) {
+        self.internal_whitelist_token(&token_id, asset_id, ticker, ft_metadata);
     }
 
     #[private]
     pub fn whitelist_token(
         &mut self,
         token_id: ValidAccountId,
-        asset_id: ValidAccountId
+        asset_id: ValidAccountId,
+        ticker: Option<String>,
     ) -> Promise {
             ext_ft::ft_metadata(
                 &token_id,
@@ -168,6 +200,7 @@ impl TokenFactory {
             ).then(ext_self::on_ft_metadata(
                 token_id.into(),
                 asset_id.into(),
+                ticker.into(),
                 &env::current_account_id(),
                 NO_DEPOSIT,
                 GAS_FT_METADATA_WRITE,
@@ -176,10 +209,10 @@ impl TokenFactory {
 
     #[private]
     pub fn whitelist_token_with_metadata(&mut self, token_id: ValidAccountId,
-                                  asset_id: ValidAccountId,
-                                  metadata: FungibleTokenMetadata) {
-        self.internal_whitelist_token(&(token_id.into()), asset_id.into(), metadata);
-
+                                         asset_id: ValidAccountId,
+                                         ticker: Option<String>,
+                                         metadata: FungibleTokenMetadata) {
+        self.internal_whitelist_token(&(token_id.into()), asset_id.into(), ticker, metadata);
     }
 
     #[private]
@@ -219,24 +252,35 @@ impl TokenFactory {
            .filter_map(|token_id| token_ids.get(token_id)).collect()
     }
 
-    pub fn get_whitelisted_tokens(&self, from_index: u64, limit: u64) -> Vec<WhitelistedToken> {
-        self.get_whitelisted_token_account_ids(from_index, limit).iter().map(|token_id| self.whitelisted_tokens.get(token_id).expect("Token not found"))
+    pub fn get_whitelisted_tokens(&self, from_index: u64, limit: u64) -> Vec<Option<WhitelistedTokenOutput>> {
+        self.get_whitelisted_token_account_ids(from_index, limit)
+           .iter()
+           .map(|token_id|
+              WhitelistedTokenOutput::from(self.whitelisted_tokens.get(token_id), token_id.clone()))
            .collect()
     }
 
-    pub fn get_whitelisted_token(&self, token_id: TokenAccountId) -> WhitelistedToken {
-        self.internal_get_whitelisted_token(&token_id)
+    pub fn get_whitelisted_token(&self, token_id: TokenAccountId) -> Option<WhitelistedTokenOutput> {
+        WhitelistedTokenOutput::from(Some(self.internal_get_whitelisted_token(&token_id)), token_id)
     }
 
     pub fn get_tokens(&self, from_index: u64, limit: u64) -> Vec<TokenArgsOutput> {
         let keys = self.tokens.keys_as_vector();
         let tokens = self.tokens.values_as_vector();
-        (from_index..std::cmp::min(from_index + limit, tokens.len()))
-           .filter_map(|index| TokenArgsOutput::from(tokens.get(index), keys.get(index))).collect()
+        (from_index..std::cmp::min(from_index + limit, tokens.len())).filter_map(|index| TokenArgsOutput::from(tokens.get(index), keys.get(index))).collect()
     }
 
     pub fn get_token(&self, token_id: TokenId) -> Option<TokenArgsOutput> {
         TokenArgsOutput::from(self.tokens.get(&token_id), Some(token_id))
+    }
+
+    pub fn ft_metadata(&self, token_id: TokenId) -> Option<FungibleTokenMetadata>{
+        if let Some (token) = self.tokens.get(&token_id){
+            Some(token.meta)
+        }
+        else{
+            None
+        }
     }
 
     pub fn get_token_name(&self, token_args: TokenArgsInput) -> AccountId {
@@ -260,10 +304,11 @@ impl TokenFactory {
     fn internal_whitelist_token(&mut self,
                                 token_id: &AccountId,
                                 asset_id: AccountId,
+                                ticker: Option<String>,
                                 metadata: FungibleTokenMetadata) {
         assert!(is_valid_symbol(&metadata.symbol.to_ascii_lowercase()), "Invalid Token symbol");
 
-        self.whitelisted_tokens.insert(token_id, &WhitelistedToken { asset_id, metadata });
+        self.whitelisted_tokens.insert(token_id, &WhitelistedToken { asset_id, ticker, metadata });
     }
 
     fn internal_get_whitelisted_token(&self, token_id: &AccountId) -> WhitelistedToken {
@@ -299,10 +344,17 @@ impl TokenFactory {
         let input_price_oracle_account_id: AccountId = token_args.price_oracle_account_id.expect("Price Oracle Contract is missing").into();
         assert!(self.whitelisted_price_oracles.contains(&input_price_oracle_account_id), "Price Oracle wasn't whitelisted");
 
+        // name of the token we want to create
         let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
+
+        let ticker = if whitelisted_token.ticker.is_none() {
+            token_name.clone()
+        } else {
+            whitelisted_token.ticker.unwrap()
+        };
         let token_decimals = whitelisted_token.metadata.decimals;
 
-        assert!(token_decimals > 0 && !token_name.is_empty(), "Missing token metadata");
+        assert!(token_decimals > 0 && !ticker.is_empty(), "Missing token metadata");
 
         let mut metadata = whitelisted_token.metadata;
 
@@ -321,8 +373,8 @@ impl TokenFactory {
         };
         assert!(token_args.target_price.0 > 0, "Wrong target price");
 
-        metadata.name = format!("{} at ${}", token_name, price);
-        metadata.symbol = format!("{}@{}", token_name, price);
+        metadata.name = format!("{} at ${}", ticker, price);
+        metadata.symbol = format!("{}@{}", ticker, price);
 
         metadata.assert_valid();
 
@@ -340,6 +392,7 @@ impl TokenFactory {
 
         let args: TokenArgs = TokenArgs {
             locked_token_account_id: token_args.token_id.into(),
+            token_id: token_id.clone(),
             meta: metadata,
             backup_trigger_account_id: Some(BACKUP_TRIGGER_ACCOUNT_ID.into()),
             price_oracle_account_id: input_price_oracle_account_id,

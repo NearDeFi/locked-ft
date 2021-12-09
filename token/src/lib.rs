@@ -1,21 +1,21 @@
-mod price_receiver;
-
-use crate::price_receiver::*;
-
 use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
+use near_contract_standards::fungible_token::FungibleToken;
 use near_contract_standards::fungible_token::metadata::{
     FungibleTokenMetadata, FungibleTokenMetadataProvider,
 };
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
-use near_contract_standards::fungible_token::FungibleToken;
+use near_sdk::{
+    AccountId, assert_one_yocto, Balance, BorshStorageKey, env, ext_contract, Gas, is_promise_success,
+    log, near_bindgen, PanicOnDefault, Promise, PromiseOrValue, Timestamp,
+};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LazyOption;
-use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::json_types::{U128, ValidAccountId};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{
-    assert_one_yocto, env, ext_contract, is_promise_success, log, near_bindgen, AccountId, Balance,
-    BorshStorageKey, Gas, PanicOnDefault, Promise, PromiseOrValue, Timestamp,
-};
+
+use crate::price_receiver::*;
+
+mod price_receiver;
 
 near_sdk::setup_alloc!();
 
@@ -26,7 +26,10 @@ const ONE_YOCTO: Balance = 1;
 const TGAS: Gas = 1_000_000_000_000;
 const GAS_FOR_FT_TRANSFER: Gas = 10 * TGAS;
 const GAS_FOR_AFTER_FT_TRANSFER: Gas = 10 * TGAS;
+const GAS_FT_METADATA_READ: Gas = 25 * TGAS;
+const GAS_FT_METADATA_WRITE: Gas = 25 * TGAS;
 
+type TokenId = String;
 pub type TokenAccountId = AccountId;
 
 #[derive(BorshSerialize, BorshStorageKey)]
@@ -49,10 +52,21 @@ pub enum Status {
 #[ext_contract(ext_self)]
 pub trait ExtSelf {
     fn after_ft_transfer(&mut self, account_id: AccountId, balance: U128) -> bool;
+
+    // Save FT metadata
+    fn on_ft_metadata(
+        &mut self
+    );
 }
 
 pub trait ExtSelf {
     fn after_ft_transfer(&mut self, account_id: AccountId, balance: U128) -> bool;
+}
+
+#[ext_contract(ext_ft)]
+pub trait ExtFT {
+    // Get FT metadata.
+    fn ft_metadata(&self, token_id: TokenAccountId) -> FungibleTokenMetadata;
 }
 
 #[near_bindgen]
@@ -61,6 +75,7 @@ pub trait ExtSelf {
 pub struct Contract {
     #[serde(skip)]
     pub ft: FungibleToken,
+    pub token_id: TokenId,
     #[serde(skip)]
     pub meta: LazyOption<FungibleTokenMetadata>,
     pub backup_trigger_account_id: Option<AccountId>,
@@ -68,6 +83,7 @@ pub struct Contract {
     pub asset_id: AssetId,
     pub minimum_unlock_price: Price,
     pub locked_token_account_id: TokenAccountId,
+    pub factory_account_id: AccountId,
     pub status: Status,
 }
 
@@ -125,6 +141,7 @@ impl Contract {
     #[init]
     pub fn new(
         locked_token_account_id: ValidAccountId,
+        token_id: TokenAccountId,
         meta: FungibleTokenMetadata,
         backup_trigger_account_id: Option<ValidAccountId>,
         price_oracle_account_id: ValidAccountId,
@@ -133,6 +150,7 @@ impl Contract {
     ) -> Self {
         Self {
             ft: FungibleToken::new(StorageKey::Ft),
+            token_id,
             meta: LazyOption::new(StorageKey::FtMeta, Some(&meta)),
             backup_trigger_account_id: backup_trigger_account_id.map(|a| a.into()),
             locked_token_account_id: locked_token_account_id.into(),
@@ -140,6 +158,7 @@ impl Contract {
             price_oracle_account_id: price_oracle_account_id.into(),
             asset_id,
             minimum_unlock_price,
+            factory_account_id: env::predecessor_account_id()
         }
     }
 
@@ -172,8 +191,7 @@ impl Contract {
             &self.locked_token_account_id,
             ONE_YOCTO,
             GAS_FOR_FT_TRANSFER,
-        )
-        .then(ext_self::after_ft_transfer(
+        ).then(ext_self::after_ft_transfer(
             account_id,
             U128(balance),
             &env::current_account_id(),
@@ -182,12 +200,27 @@ impl Contract {
         ))
     }
 
-    pub fn update_meta (&mut self, meta: FungibleTokenMetadata){
-        assert_eq!(env::predecessor_account_id(), OWNER_ID, "No Access");
-        self.meta = LazyOption::new(StorageKey::FtMeta, Some(&meta));
+    /// Sync meta of token from the factory with the current contract state
+    pub fn update_meta(&mut self) -> Promise {
+        ext_ft::ft_metadata(
+            self.token_id.clone(),
+            &self.factory_account_id,
+            NO_DEPOSIT,
+            GAS_FT_METADATA_READ,
+        ).then(ext_self::on_ft_metadata(
+            &env::current_account_id(),
+            NO_DEPOSIT,
+            GAS_FT_METADATA_WRITE,
+        ))
     }
 
-    pub fn get_status (&self) -> Status { self.status }
+
+    pub fn update_price_oracle_account_id(&mut self, price_oracle_account_id: ValidAccountId) {
+        assert_owner();
+        self.price_oracle_account_id = price_oracle_account_id.into();
+    }
+
+    pub fn get_status(&self) -> Status { self.status }
 
     fn on_account_closed(&mut self, account_id: AccountId, balance: Balance) {
         log!("Closed @{} with {}", account_id, balance);
@@ -196,4 +229,20 @@ impl Contract {
     fn on_tokens_burned(&mut self, account_id: AccountId, amount: Balance) {
         log!("Account @{} burned {}", account_id, amount);
     }
+
+    pub fn on_ft_metadata(
+        &mut self,
+        #[callback] ft_metadata: Option<FungibleTokenMetadata>) {
+        if let Some(ft_metadata_value) = ft_metadata {
+            self.meta.set(&ft_metadata_value);
+        }
+        else {
+            log!("Missing metadata");
+        }
+
+    }
+}
+
+fn assert_owner() {
+    assert_eq!(env::predecessor_account_id(), OWNER_ID, "No Access");
 }

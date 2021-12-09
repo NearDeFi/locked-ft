@@ -32,6 +32,7 @@ impl TokenFactory {
                 whitelisted_tokens_new.insert(&token_id,
                                               &WhitelistedToken {
                                                   asset_id: old_token.asset_id,
+                                                  ticker: Some(old_token.title.clone()),
                                                   metadata: FungibleTokenMetadata {
                                                       spec: "ft-1.0.0".to_string(),
                                                       name: old_token.title.clone(),
