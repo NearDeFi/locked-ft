@@ -201,7 +201,7 @@ impl TokenFactory {
             ).then(ext_self::on_ft_metadata(
                 token_id.into(),
                 asset_id.into(),
-                ticker.into(),
+                ticker,
                 &env::current_account_id(),
                 NO_DEPOSIT,
                 GAS_FT_METADATA_WRITE,
@@ -286,19 +286,7 @@ impl TokenFactory {
 
     pub fn get_token_name(&self, token_args: TokenArgsInput) -> AccountId {
         let whitelisted_token = self.internal_get_whitelisted_token(&(token_args.token_id.clone().into()));
-        let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol);
-        let target_price_short: u128 = token_args.target_price.0 / 10000;
-        let target_price_remainder: u128 = token_args.target_price.0 % 10000;
-
-        let token_id = format!(
-            "{}-{}-{:04}",
-            token_name, target_price_short, target_price_remainder
-        ).to_ascii_lowercase();
-
-        let token_account_id = format!("{}.{}", token_id, env::current_account_id());
-
-        assert!(env::is_valid_account_id(token_account_id.as_bytes()), "Token Account ID is invalid");
-
+        let (token_account_id, _, _, _) = generate_token_namespace(&token_args, &whitelisted_token);
         token_account_id
     }
 
@@ -341,21 +329,14 @@ impl TokenFactory {
         }
 
         let whitelisted_token = self.internal_get_whitelisted_token(&(token_args.token_id.clone().into()));
+        let (token_account_id, ticker, price, token_id) = generate_token_namespace(&token_args, &whitelisted_token);
 
         let input_price_oracle_account_id: AccountId = token_args.price_oracle_account_id.expect("Price Oracle Contract is missing").into();
         assert!(self.whitelisted_price_oracles.contains(&input_price_oracle_account_id), "Price Oracle wasn't whitelisted");
 
-        // name of the token we want to create
-        let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
-
-        let ticker = if whitelisted_token.ticker.is_none() {
-            token_name.clone()
-        } else {
-            whitelisted_token.ticker.unwrap()
-        };
         let token_decimals = whitelisted_token.metadata.decimals;
 
-        assert!(token_decimals > 0 && !ticker.is_empty() && !token_name.is_empty(), "Missing token metadata");
+        assert!(token_decimals > 0, "Missing token decimals");
         assert!(token_args.target_price.0 > 0, "Illegal target price");
 
         let mut metadata = whitelisted_token.metadata;
@@ -365,32 +346,10 @@ impl TokenFactory {
             decimals: token_decimals + 4,
         };
 
-        let target_price_short: u128 = token_args.target_price.0 / 10000;
-        let target_price_remainder: u128 = token_args.target_price.0 % 10000;
-        let target_price_remainder_without_trailing_zeros: String = remove_trailing_zeros(target_price_remainder);
-
-        let price = if target_price_remainder > 0 {
-            format!("{}.{}", target_price_short, target_price_remainder_without_trailing_zeros)
-        } else {
-            format!("{}", target_price_short)
-        };
-
         metadata.name = format!("{} at ${}", ticker, price);
         metadata.symbol = format!("{}@{}", ticker, price);
 
         metadata.assert_valid();
-
-        let token_id = format!(
-            "{}-at-{}-{}",
-            token_name, target_price_short, target_price_remainder_without_trailing_zeros
-        )
-        .to_ascii_lowercase();
-
-        let token_account_id = format!("{}.{}", token_id, env::current_account_id());
-        assert!(
-            env::is_valid_account_id(token_account_id.as_bytes()),
-            "Token Account ID is invalid"
-        );
 
         let args: TokenArgs = TokenArgs {
             locked_token_account_id: token_args.token_id.into(),
@@ -485,7 +444,7 @@ pub mod u128_dec_format {
     }
 }
 
-pub fn is_valid_symbol(token_id: &str) -> bool {
+fn is_valid_symbol(token_id: &str) -> bool {
     for c in token_id.as_bytes() {
         match c {
             b'0'..=b'9' | b'a'..=b'z' | b'_' | b'-' => (),
@@ -493,6 +452,43 @@ pub fn is_valid_symbol(token_id: &str) -> bool {
         }
     }
     true
+}
+
+/// returns (token_account_id, ticker, price, token_id)
+fn generate_token_namespace (token_args: &TokenArgsInput, whitelisted_token: &WhitelistedToken) -> (TokenAccountId, String, String, String){
+    // name of the token we want to create
+    let token_name = TokenFactory::format_title(whitelisted_token.metadata.symbol.clone());
+
+    let ticker = if whitelisted_token.ticker.is_none() {
+        token_name.clone()
+    } else {
+        whitelisted_token.ticker.clone().unwrap()
+    };
+
+    assert!(!ticker.is_empty() && !token_name.is_empty(), "Illegal token metadata");
+
+    let target_price_short: u128 = token_args.target_price.0 / 10000;
+    let target_price_remainder: u128 = token_args.target_price.0 % 10000;
+    let target_price_remainder_without_trailing_zeros: String = remove_trailing_zeros(target_price_remainder);
+
+    let price = if target_price_remainder > 0 {
+        format!("{}.{}", target_price_short, target_price_remainder_without_trailing_zeros)
+    } else {
+        format!("{}", target_price_short)
+    };
+
+    let token_id = format!(
+        "{}-at-{}-{}",
+        token_name, target_price_short, target_price_remainder_without_trailing_zeros
+    ).to_ascii_lowercase();
+
+    let token_account_id: TokenAccountId = format!("{}.{}", token_id, env::current_account_id());
+    assert!(
+        env::is_valid_account_id(token_account_id.as_bytes()),
+        "Token Account ID is invalid"
+    );
+
+    (token_account_id, ticker, price, token_id)
 }
 
 fn remove_trailing_zeros(amount: u128) -> String {
