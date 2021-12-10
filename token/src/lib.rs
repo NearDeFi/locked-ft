@@ -230,6 +230,7 @@ impl Contract {
         log!("Account @{} burned {}", account_id, amount);
     }
 
+    #[private]
     pub fn on_ft_metadata(
         &mut self,
         #[callback] ft_metadata: Option<FungibleTokenMetadata>) {

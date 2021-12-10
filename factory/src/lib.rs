@@ -177,6 +177,7 @@ impl TokenFactory {
         }
     }
 
+    #[private]
     pub fn on_ft_metadata(
         &mut self,
         #[callback] ft_metadata: FungibleTokenMetadata,
