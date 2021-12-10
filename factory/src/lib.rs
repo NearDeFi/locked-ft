@@ -65,7 +65,7 @@ pub struct TokenFactory {
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct WhitelistedToken {
-    // Asset to track for a price.
+    // Asset to track the price.
     pub asset_id: AssetId,
     // Ticker will be used for child tokens. May be different with metadata.symbol (wNear -> NEAR)
     pub ticker: Option<String>,
@@ -355,7 +355,7 @@ impl TokenFactory {
         };
         let token_decimals = whitelisted_token.metadata.decimals;
 
-        assert!(token_decimals > 0 && !ticker.is_empty(), "Missing token metadata");
+        assert!(token_decimals > 0 && !ticker.is_empty() && !token_name.is_empty(), "Missing token metadata");
 
         let mut metadata = whitelisted_token.metadata;
 
