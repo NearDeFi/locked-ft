@@ -60,4 +60,10 @@ impl TokenFactory {
         // delete because of wrong name
         self.tokens.remove(&"near-20-0000".to_string());
     }
+
+    #[private]
+    pub fn migrate_12(&mut self)  {
+        self.tokens.clear();
+        self.whitelisted_tokens.clear();
+    }
 }

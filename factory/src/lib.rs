@@ -356,6 +356,7 @@ impl TokenFactory {
         let token_decimals = whitelisted_token.metadata.decimals;
 
         assert!(token_decimals > 0 && !ticker.is_empty() && !token_name.is_empty(), "Missing token metadata");
+        assert!(token_args.target_price.0 > 0, "Illegal target price");
 
         let mut metadata = whitelisted_token.metadata;
 
@@ -366,13 +367,13 @@ impl TokenFactory {
 
         let target_price_short: u128 = token_args.target_price.0 / 10000;
         let target_price_remainder: u128 = token_args.target_price.0 % 10000;
+        let target_price_remainder_without_trailing_zeros: String = remove_trailing_zeros(target_price_remainder);
 
         let price = if target_price_remainder > 0 {
-            format!("{}.{}", target_price_short, target_price_remainder)
+            format!("{}.{}", target_price_short, target_price_remainder_without_trailing_zeros)
         } else {
             format!("{}", target_price_short)
         };
-        assert!(token_args.target_price.0 > 0, "Wrong target price");
 
         metadata.name = format!("{} at ${}", ticker, price);
         metadata.symbol = format!("{}@{}", ticker, price);
@@ -380,8 +381,8 @@ impl TokenFactory {
         metadata.assert_valid();
 
         let token_id = format!(
-            "{}-{}-{:04}",
-            token_name, target_price_short, target_price_remainder
+            "{}-at-{}-{}",
+            token_name, target_price_short, target_price_remainder_without_trailing_zeros
         )
         .to_ascii_lowercase();
 
@@ -492,4 +493,34 @@ pub fn is_valid_symbol(token_id: &str) -> bool {
         }
     }
     true
+}
+
+fn remove_trailing_zeros(amount: u128) -> String {
+    let mut string = format!("{:04}", amount);
+    for _ in 0..4 {
+        if string.ends_with('0') && string.len() != 1 {
+            string.pop();
+        }
+    }
+
+    string
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn test_remove_trailing_zeros() {
+        assert_eq!(remove_trailing_zeros(1000), "1");
+        assert_eq!(remove_trailing_zeros(1200), "12");
+        assert_eq!(remove_trailing_zeros(1230), "123");
+        assert_eq!(remove_trailing_zeros(1234), "1234");
+        assert_eq!(remove_trailing_zeros(1), "0001");
+        assert_eq!(remove_trailing_zeros(10), "001");
+        assert_eq!(remove_trailing_zeros(100), "01");
+        assert_eq!(remove_trailing_zeros(1000), "1");
+        assert_eq!(remove_trailing_zeros(0), "0");
+    }
 }
